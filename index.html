@@ -5,244 +5,196 @@
         <script type="text/javascript">
             let timer = {
                 counterMax: 0,
-                counter: 0,
+                startedAt: 0,
+                stoppedAt: 0,
                 isCounting: false,
-                hasNoticed: true,
-            }
+                remaining: () => {
+                    return timer.isCounting
+                        ? timer.startedAt + timer.counterMax - now()
+                        : timer.startedAt + timer.counterMax - timer.stoppedAt;
+                },
+                toString: () => {
+                    return { ...timer, remaining: timer.remaining() };
+                }
+            };
 
             // 入力された時間を取得します
             const getSetting = () => {
                 const hour = parseFloat(document.getElementById("hour").value) || 0;
                 const min = parseFloat(document.getElementById("min").value) || 0;
                 const sec = parseFloat(document.getElementById("sec").value) || 0;
-                return parseSecond(hour, min, sec)
-            }
+                return parseSecond(hour, min, sec);
+            };
 
             // 時間を秒に換算します
             const parseSecond = (hour, min, sec) => {
                 const second = hour * 3600 + min * 60 + sec;
                 return parseInt(second);
-            }
+            };
 
             // 一桁の数字を0で埋め、二桁にして返します
             const zeroFill = num => {
-                return (0 <= num && num < 10) ? ("0" + num) : num;
-            }
+                return (0 <= num && num < 10) ? ("0" + num) : `${num}`;
+            };
 
             // 秒を時・分・秒に換算して返します
             const parseHMS = second => {
+                if (second <= 0) return {
+                    hour: "00",
+                    min: "00",
+                    sec: "00"
+                };
                 const hour = Math.floor(second / 3600);
                 const min = Math.floor((second - hour * 3600) / 60);
                 const sec = second - hour * 3600 - min * 60;
-
                 return {
                     hour: zeroFill(hour),
                     min: zeroFill(min),
                     sec: zeroFill(sec)
-                }
-            }
+                };
+            };
+
+            // unix時間(コンマ以下は切り捨て)を返します。
+            const now = () => Math.floor(Date.now() / 1000);
+
+            const sleep = time => {
+                return new Promise((resolve) => {
+                    setTimeout(resolve, time);
+                });
+            };
 
             const selectorAll = sel => {
-                return Array.from(document.querySelectorAll(sel))
-            }
+                return Array.from(document.querySelectorAll(sel));
+            };
 
             const selector = sel => {
-                return document.querySelector(sel)
-            }
+                return document.querySelector(sel);
+            };
 
-            const title = second => {
-                const time = parseHMS(second)
-                let array = []
-                if (time.hour !== "00") array.push(`${time.hour}h`)
-                if (time.min !== "00") array.push(`${time.min}m`)
-                array.push(`${time.sec}s`)
-                return array.join(" ")
+            const button = {
+                start: () => selector("#start"),
+                reset: () => selector("#reset")
+            };
+
+            const form = {
+                hour: () => selector("#hour"),
+                min: () => selector("#min"),
+                sec: () => selector("#sec")
+            };
+
+            // 与えられた時間(秒)を 99h 99m 99s の形式で返します
+            const timeFormat = second => {
+                const time = parseHMS(second);
+                const array = [];
+                if (time.hour !== "00") array.push(`${time.hour}h`);
+                if (time.min !== "00") array.push(`${time.min}m`);
+                array.push(`${time.sec}s`);
+                return array.join(" ");
+            };
+
+            ////////////////////////////////////////////////////////////////////////////////
+            // Controller
+            //
+            const controller = {};
+
+            controller.start = () => {
+                if (timer.isCounting) action.pause()
+                else action.start();
+            };
+
+            controller.reset = () => {
+                action.reset();
+            };
+
+            controller.form = {};
+            controller.form.input = () => {
+                timer = {
+                    ...timer,
+                    counterMax: getSetting(),
+                    startedAt: 0,
+                    stoppedAt: 0,
+                    isCounting: false
+                };
+            };
+
+            controller.form.enter = event => {
+                event.target.blur();
+                if (!timer.isCounting) action.start();
+            };
+
+            controller.form.focus = () => {
+                if (timer.isCounting) action.pause();
             }
 
             ////////////////////////////////////////////////////////////////////////////////
             // Action
             //
-            const action = {}
+            const action = {};
 
             // タイマーをスタートさせます
-            action.start = () => {
-                const time = getSetting()
-                if (!timer.isCounting) {
-                    timer = model.start(timer)(time)
-                    state.render(timer)
-                }
-                return false
-            }
+            action.start = async () => {
+                timer = {
+                    ...timer,
+                    startedAt: now() - timer.counterMax + timer.remaining(),
+                    isCounting: true
+                };
+                while(timer.isCounting) {
+                    if (timer.remaining() <= 0) {
+                        timer = {
+                            ...timer,
+                            stoppedAt: now(),
+                            isCounting: false
+                        };
+                        new Notification("タイマーが終了しました。");
+                        break;
+                    };
+                    state.render(timer);
+                    await sleep(300);
+                };
+                state.render(timer);
+                return false;
+            };
 
             // タイマーをストップさせます
             action.pause = () => {
-                const proposal = timer
-                proposal.isCounting = false
-                timer = model.present(timer)(proposal)
-                state.render(timer)
-                return false
-            }
-
-            // タイマーを1秒進めます
-            action.decrement = () => {
-                setTimeout(
-                    () => {
-                        timer = model.decrement(timer)
-                        state.render(timer)
-                    },
-                    1000
-                )
-                return false
-            }
+                timer = {
+                    ...timer,
+                    stoppedAt: now(),
+                    isCounting: false
+                };
+                return false;
+            };
 
             // タイマーのカウントをリセットします
             action.reset = () => {
-                const proposal = timer
-                proposal.counter = proposal.counterMax
-                proposal.isCounting = false
-                proposal.hasNoticed = false
-                timer = model.present(timer)(proposal)
-                state.render(timer)
-                return false
-            }
-
-            // 通知を行ったことを示すフラグをTrueにします
-            action.noticed = () => {
-                const proposal = timer
-                proposal.hasNoticed = true
-                timer = model.present(timer)(proposal)
-                state.render(timer)
-                return false
-            }
-
-            ////////////////////////////////////////////////////////////////////////////////
-            // Model
-            //
-            const model = {}
-            model.decrement = timer => {
-                if (timer.isCounting) {
-                    timer.counter = (timer.counter - 1 < 0) ? 0 : timer.counter - 1
-                    timer.isCounting = 0 < timer.counter
-                }
-                return timer
-            }
-
-            model.start = timmer => counter => {
-                if (!isResume(timer)(counter)) {
-                    timer.counterMax = counter
-                }
-                timer.counter = counter
-                timer.isCounting = true
-                timer.hasNoticed = false
-                return timer
-            }
-
-            model.present = timer => proposal => {
-                timer.counterMax = proposal.counterMax
-                timer.counter = (proposal.counter < 0) ? 0 : proposal.counter
-                timer.isCounting = (proposal.counter < 0) ? false : proposal.isCounting
-                timer.hasNoticed = proposal.hasNoticed
-                return timer
-            }
-
-            const isResume = timer => counter => {
-                return timer.counter == counter
-            }
+                timer = {
+                    ...timer,
+                    startedAt: 0,
+                    stoppedAt: 0,
+                    isCounting: false
+                };
+                state.render(timer);
+                return false;
+            };
 
             ////////////////////////////////////////////////////////////////////////////////
             // State
             //
             const state = {}
-            state.render = model => {
-                const time = parseHMS(model.counter)
-                const btnRep = state.represention(model)
+            state.render = timer => {
+                const remaining = timer.remaining();
+                const time = parseHMS(remaining);
 
-                selector("#hour").value = time.hour
-                selector("#min").value = time.min
-                selector("#sec").value = time.sec
+                form.hour().value = time.hour;
+                form.min().value = time.min;
+                form.sec().value = time.sec;
 
-                const btn = selector("button.start")
-                btn.innerText = btnRep.text
-                btn.onclick = btnRep.onclick
+                button.start().innerText = timer.isCounting ? "Pause" : "Start";
 
-                state.nextAction(model)
-            }
-
-            state.represention = model => {
-                return (model.counter == 0) ? view.finished()
-                     : model.isCounting ? view.counting()
-                     : view.pause()
-            }
-
-            // 状態に応じて自動的なアクションを起こします
-            state.nextAction = model => {
-                if (model.isCounting) action.decrement()
-
-                if (model.counter === 0 && !model.hasNoticed) {
-                    new Notification("タイマーが終了しました。")
-                    action.noticed()
-                }
-
-                document.title = title(model.counter)
-            }
-
-            ////////////////////////////////////////////////////////////////////////////////
-            // View
-            //
-            const view = {}
-
-            // カウント中
-            view.counting = () => {
-                return {
-                    text: "Pause",
-                    onclick: action.pause
-                }
-            }
-
-            // 停止中
-            view.pause = () => {
-                return {
-                    text: "Start",
-                    onclick: action.start
-                }
-            }
-
-            // カウント終了
-            view.finished = () => {
-                return {
-                    text: "Start",
-                    onclick: action.start
-                }
-            }
-
-            // 初期
-            view.init = () => {
-                return `
-                    <div class="timer">
-                        <div class="time">
-                            <div class="column">
-                                <input id="hour" type="text" class="hour" placeholder="00">
-                                <div class="text">Hour</div>
-                            </div>
-                            <div class="coron text">:</div>
-                            <div class="column">
-                                <input id="min" type="text" class="minute" placeholder="00">
-                                <div class="text">Min</div>
-                            </div>
-                            <div class="coron text">:</div>
-                            <div class="column">
-                                <input id="sec" type="text" class="second" placeholder="00">
-                                <div class="text">Sec</div>
-                            </div>
-                        </div>
-                        <div class="buttons">
-                            <button class="start pause" onclick="action.start()">Start</button>
-                            <button class="Reset" onclick="action.reset()">Reset</button>
-                        </div>
-                    </div>
-                `
-            }
+                document.title = timeFormat(remaining);
+            };
         </script>
+
         <style type="text/css">
             body {
                 background-color: #252C31;
@@ -314,14 +266,41 @@
             }
         </style>
 	</head>
-    <body>Loading...</body>
+    <body>
+        <div class="timer">
+            <div class="time">
+                <div class="column">
+                    <input id="hour" type="text" class="hour" placeholder="00">
+                    <div class="text">Hour</div>
+                </div>
+                <div class="coron text">:</div>
+                <div class="column">
+                    <input id="min" type="text" class="minute" placeholder="00">
+                    <div class="text">Min</div>
+                </div>
+                <div class="coron text">:</div>
+                <div class="column">
+                    <input id="sec" type="text" class="second" placeholder="00">
+                    <div class="text">Sec</div>
+                </div>
+            </div>
+            <div class="buttons">
+                <button class="start pause" id="start">Start</button>
+                <button class="reset" id="reset">Reset</button>
+            </div>
+        </div>
+    </body>
     <script type="text/javascript">
-        document.body.innerHTML = view.init();
-        selectorAll("input").map(ele => {
-            ele.onkeydown = event => { if (event.key == "Enter") {
-                action.start()
-                event.target.blur()
-            } }
-        })
+        selectorAll("input").forEach(ele => {
+            ele.onkeydown = event => {
+                if (event.key == "Enter") {
+                    controller.form.enter(event);
+                };
+            };
+            ele.oninput = controller.form.input;
+            ele.onfocus = controller.form.focus;
+        });
+        button.start().onmousedown = controller.start;
+        button.reset().onmousedown = controller.reset;
     </script>
 </html>
